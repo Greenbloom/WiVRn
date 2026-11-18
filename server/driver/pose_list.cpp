@@ -20,21 +20,95 @@
 #include "pose_list.h"
 #include "driver/clock_offset.h"
 #include "driver/polynomial_interpolator.h"
+#include "driver/xrt_cast.h"
 #include "math/m_api.h"
 #include "math/m_eigen_interop.hpp"
 #include "math/m_space.h"
 #include "math/m_vec3.h"
 #include "os/os_time.h"
+#include "util/u_logging.h"
 #include "xrt/xrt_defines.h"
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+#include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <magic_enum.hpp>
+#include <numbers>
 
 using namespace xrt::auxiliary::math;
 
 namespace wivrn
 {
+namespace
+{
+// How long a pose may go without a new sample before it is frozen. Longer than
+// max extrapolation so a normal prediction horizon still uses the polynomial.
+constexpr XrTime hold_stale_ns = 200'000'000;
+
+// A wake-up sample this close to the held pose is real tracking, not a glitch.
+constexpr float hold_close_distance_m = 0.40f;
+constexpr float hold_close_angle_rad = 35.f * std::numbers::pi_v<float> / 180.f;
+
+// Samples farther than that must agree with each other before they are trusted.
+constexpr float hold_stable_distance_m = 0.03f;
+constexpr float hold_stable_angle_rad = 10.f * std::numbers::pi_v<float> / 180.f;
+constexpr int hold_stable_samples = 3;
+
+// Quest often reports a tracked pose at the origin for a few frames after a
+// controller wakes. Keep holding until that pose has been stable for a while.
+constexpr float hold_origin_m = 0.05f;
+constexpr float hold_origin_held_m = 0.20f;
+constexpr int hold_origin_stable_samples = 8;
+constexpr XrTime hold_origin_accept_ns = 300'000'000;
+
+bool pose_is_tracked(uint8_t flags)
+{
+	constexpr uint8_t need = from_headset::pose_flags::orientation_valid |
+	                         from_headset::pose_flags::position_valid |
+	                         from_headset::pose_flags::orientation_tracked |
+	                         from_headset::pose_flags::position_tracked;
+	return (flags & need) == need;
+}
+
+float vec_length(const xrt_vec3 & v)
+{
+	return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+}
+
+float vec_distance(const xrt_vec3 & a, const xrt_vec3 & b)
+{
+	const float dx = a.x - b.x;
+	const float dy = a.y - b.y;
+	const float dz = a.z - b.z;
+	return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+float quat_angle(const xrt_quat & a, const xrt_quat & b)
+{
+	const float dot = std::fabs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w);
+	return 2.f * std::acos(std::min(dot, 1.f));
+}
+
+bool notable_pose(device_id id)
+{
+	return id == device_id::LEFT_GRIP or id == device_id::RIGHT_GRIP or id == device_id::LEFT_AIM or id == device_id::RIGHT_AIM;
+}
+
+xrt_space_relation frozen_relation(const xrt_pose & pose)
+{
+	xrt_space_relation rel{};
+	rel.relation_flags = xrt_space_relation_flags(
+	        XRT_SPACE_RELATION_ORIENTATION_VALID_BIT |
+	        XRT_SPACE_RELATION_POSITION_VALID_BIT |
+	        XRT_SPACE_RELATION_ORIENTATION_TRACKED_BIT |
+	        XRT_SPACE_RELATION_POSITION_TRACKED_BIT |
+	        XRT_SPACE_RELATION_LINEAR_VELOCITY_VALID_BIT |
+	        XRT_SPACE_RELATION_ANGULAR_VELOCITY_VALID_BIT);
+	rel.pose = pose;
+	return rel;
+}
+} // namespace
 
 xrt_space_relation pose_list::interpolate(const xrt_space_relation & a, const xrt_space_relation & b, float t)
 {
@@ -119,6 +193,11 @@ void pose_list::update_tracking(const from_headset::tracking & tracking, const c
 	}
 }
 
+void pose_list::set_hold_when_untracked(bool enabled)
+{
+	hold_when_untracked = enabled;
+}
+
 void pose_list::set_derived(pose_list * source, xrt_pose offset, bool force)
 {
 	if (force)
@@ -156,6 +235,73 @@ void pose_list::reset()
 	std::lock_guard lock(mutex);
 	positions.reset();
 	orientations.reset();
+	// A profile switch clears the polynomial so the next pose does not blend
+	// with the old one, but the last pose stays available as the hold anchor.
+	if (hold_when_untracked and held.have)
+	{
+		held.holding = true;
+		held.stable = 0;
+	}
+	else
+		held = {};
+}
+
+bool pose_list::accept_tracked_sample(const from_headset::tracking::pose & pose, XrTime timestamp, bool & reset_history)
+{
+	reset_history = false;
+	if (not pose_is_tracked(pose.flags))
+	{
+		if (not held.have)
+			return true;
+
+		if (not held.holding and notable_pose(device))
+			U_LOG_I("Holding last %s pose", std::string(magic_enum::enum_name(device)).c_str());
+		held.holding = true;
+		held.stable = 0;
+		return false;
+	}
+
+	const xrt_pose sample = xrt_cast(pose.pose);
+	const bool resuming = held.have and (held.holding or timestamp - held.timestamp > hold_stale_ns);
+	if (not resuming)
+		return true;
+
+	const float distance = vec_distance(sample.position, held.pose.position);
+	const float angle = quat_angle(sample.orientation, held.pose.orientation);
+	const bool near_origin = vec_length(sample.position) < hold_origin_m and vec_length(held.pose.position) > hold_origin_held_m;
+	const bool close = distance < hold_close_distance_m and angle < hold_close_angle_rad and not near_origin;
+	// Samples from before a long sleep make the polynomial fit unstable.
+	if (close and timestamp - held.timestamp > 1'000'000'000)
+		reset_history = true;
+	if (not close)
+	{
+		const bool stable_with_candidate = held.stable > 0 and
+		                                    vec_distance(sample.position, held.candidate.position) < hold_stable_distance_m and
+		                                    quat_angle(sample.orientation, held.candidate.orientation) < hold_stable_angle_rad;
+		if (stable_with_candidate)
+			++held.stable;
+		else
+		{
+			held.candidate = sample;
+			held.stable = 1;
+			held.candidate_since = timestamp;
+		}
+
+		const int needed = near_origin ? hold_origin_stable_samples : hold_stable_samples;
+		const bool origin_ready = not near_origin or timestamp - held.candidate_since >= hold_origin_accept_ns;
+		if (held.stable < needed or not origin_ready)
+		{
+			held.holding = true;
+			return false;
+		}
+		reset_history = true;
+	}
+
+	if (held.holding and notable_pose(device))
+		U_LOG_I("Resuming %s pose", std::string(magic_enum::enum_name(device)).c_str());
+	held.holding = false;
+	held.stable = 0;
+	return true;
 }
 
 void pose_list::add_sample(XrTime production_timestamp, XrTime timestamp, const from_headset::tracking::pose & pose, const clock_offset & offset)
@@ -205,8 +351,32 @@ void pose_list::add_sample(XrTime production_timestamp, XrTime timestamp, const 
 	}
 
 	std::lock_guard lock(mutex);
+
+	bool reset_history = false;
+	if (hold_when_untracked and not accept_tracked_sample(pose, timestamp, reset_history))
+		return;
+
+	if (reset_history)
+	{
+		positions.reset();
+		orientations.reset();
+		// The first accepted sample after a jump often carries a garbage
+		// velocity. Drop it so the hand does not flick.
+		position.dy.reset();
+		orientation.dy.reset();
+	}
+
 	positions.add_sample(position);
 	orientations.add_sample(orientation);
+
+	if (hold_when_untracked and pose_is_tracked(pose.flags))
+	{
+		held.have = true;
+		held.holding = false;
+		held.stable = 0;
+		held.timestamp = timestamp;
+		held.pose = xrt_cast(pose.pose);
+	}
 
 	if (dumper)
 	{
@@ -231,6 +401,13 @@ void pose_list::add_sample(XrTime production_timestamp, XrTime timestamp, const 
 std::pair<XrTime, xrt_space_relation> pose_list::get_at(XrTime at_timestamp_ns)
 {
 	std::lock_guard lock(mutex);
+
+	if (hold_when_untracked and held.have and (held.holding or at_timestamp_ns - held.timestamp > hold_stale_ns))
+	{
+		// Report "now" so the tracking feedback loop does not treat the
+		// frozen sample as seconds of motion-to-photon latency.
+		return {os_monotonic_get_ns(), frozen_relation(held.pose)};
+	}
 
 	xrt_space_relation ret{};
 	auto flags = [&](int f) {

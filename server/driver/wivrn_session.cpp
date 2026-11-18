@@ -101,6 +101,10 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
         left_hand_interaction(XRT_DEVICE_EXT_HAND_INTERACTION, 0, &hmd, this),
         right_hand_interaction(XRT_DEVICE_EXT_HAND_INTERACTION, 1, &hmd, this)
 {
+	hold_controller_pose = configuration().hold_controller_pose;
+	if (hold_controller_pose)
+		U_LOG_I("hold-controller-pose is enabled");
+
 	try
 	{
 		audio_handle = audio_device::create(
@@ -585,8 +589,43 @@ void wivrn_session::operator()(const from_headset::tracking & tracking)
 			uinput_handler->destroy_gamepad();
 	}
 
-	auto left = (roles.left == -1 || roles.left == left_controller_index || roles.left == left_hand_interaction_index) ? get_name(tracking.interaction_profiles[0]) : XRT_DEVICE_INVALID;
-	auto right = (roles.right == -1 || roles.right == right_controller_index || roles.right == right_hand_interaction_index) ? get_name(tracking.interaction_profiles[1]) : XRT_DEVICE_INVALID;
+	// Remember the last physical controller profile. A later "none" (asleep,
+	// idle, or a brief disconnect) keeps that profile so the hand role is not
+	// dropped. Hand tracking still replaces the controller.
+	auto note_profile = [&](int hand, interaction_profile profile) {
+		if (profile != interaction_profile::none and profile != interaction_profile::ext_hand_interaction_ext)
+		{
+			latched_controller_profile[hand] = profile;
+			controller_profile_latched[hand] = true;
+		}
+		else if (profile == interaction_profile::ext_hand_interaction_ext)
+			controller_profile_latched[hand] = false;
+	};
+	note_profile(0, tracking.interaction_profiles[0]);
+	note_profile(1, tracking.interaction_profiles[1]);
+
+	auto profile_for_role = [&](int hand, interaction_profile profile, bool owned_by_wivrn) {
+		if (not owned_by_wivrn)
+			return interaction_profile::none;
+		if (hold_controller_pose and profile == interaction_profile::none and controller_profile_latched[hand])
+		{
+			if (not controller_profile_held[hand])
+			{
+				U_LOG_I("Holding %s controller while it is asleep", hand == 0 ? "left" : "right");
+				controller_profile_held[hand] = true;
+			}
+			return latched_controller_profile[hand];
+		}
+		if (controller_profile_held[hand] and profile != interaction_profile::none and profile != interaction_profile::ext_hand_interaction_ext)
+			U_LOG_I("%s controller is awake", hand == 0 ? "Left" : "Right");
+		controller_profile_held[hand] = false;
+		return profile;
+	};
+
+	const bool left_is_wivrn = roles.left == -1 or roles.left == left_controller_index or roles.left == left_hand_interaction_index;
+	const bool right_is_wivrn = roles.right == -1 or roles.right == right_controller_index or roles.right == right_hand_interaction_index;
+	auto left = get_name(profile_for_role(0, tracking.interaction_profiles[0], left_is_wivrn));
+	auto right = get_name(profile_for_role(1, tracking.interaction_profiles[1], right_is_wivrn));
 	if (left != roles.left_profile or right != roles.right_profile)
 	{
 		U_LOG_I("Updating interaction profiles: from \n"

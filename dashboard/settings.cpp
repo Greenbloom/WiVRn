@@ -125,6 +125,7 @@ void Settings::emitAllChanged()
 	lhMaxExtrapolationChanged();
 	lhStickDeadzoneChanged();
 	hidForwardingChanged();
+	holdControllerPoseChanged();
 	portChanged();
 	hostnameChanged();
 }
@@ -386,6 +387,22 @@ void Settings::set_hidForwarding(const bool & value)
 		hidForwardingChanged();
 }
 
+bool Settings::holdControllerPose() const
+{
+	auto it = m_jsonSettings.find("hold-controller-pose");
+	if (it != m_jsonSettings.end() and it->is_boolean())
+		return *it;
+	return false;
+}
+
+void Settings::set_holdControllerPose(const bool & value)
+{
+	auto old = holdControllerPose();
+	m_jsonSettings["hold-controller-pose"] = value;
+	if (old != value)
+		holdControllerPoseChanged();
+}
+
 bool Settings::debugGui() const
 {
 	// Advanced options (debug window, steamvr_lh)
@@ -589,6 +606,7 @@ void Settings::restore_defaults()
 	m_jsonSettings.erase("encoder");
 	m_jsonSettings.erase("application");
 	m_jsonSettings.erase("hid-forwarding");
+	m_jsonSettings.erase("hold-controller-pose");
 	m_jsonSettings.erase("debug-gui");
 	m_jsonSettings.erase("use-steamvr-lh");
 	m_jsonSettings.erase("lh-stick-deadzone");

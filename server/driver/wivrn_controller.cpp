@@ -632,7 +632,8 @@ wivrn_controller::wivrn_controller(xrt_device_name name,
 		inputs[WIVRN_CONTROLLER_##NAME].active = true;                      \
 	} while (0)
 
-	if (auto grip_surface = configuration().grip_surface)
+	const configuration config;
+	if (auto grip_surface = config.grip_surface)
 	{
 		std::array<float, 3> angles = grip_surface.value();
 		float deg_2_rad = std::numbers::pi / 180.0;
@@ -645,6 +646,17 @@ wivrn_controller::wivrn_controller(xrt_device_name name,
 	else if (not cnx->get_info().palm_pose)
 	{
 		palm.set_derived(&grip, XRT_POSE_IDENTITY, false);
+	}
+
+	// Hand-interaction devices stay live so hand tracking can still replace a
+	// controller. Only the physical controller poses are held.
+	if (name != XRT_DEVICE_EXT_HAND_INTERACTION and config.hold_controller_pose)
+	{
+		grip.set_hold_when_untracked(true);
+		aim.set_hold_when_untracked(true);
+		palm.set_hold_when_untracked(true);
+		pinch_ext.set_hold_when_untracked(true);
+		poke_ext.set_hold_when_untracked(true);
 	}
 
 	if (name != XRT_DEVICE_EXT_HAND_INTERACTION)

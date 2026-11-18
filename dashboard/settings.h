@@ -74,6 +74,7 @@ public:
 	Q_PROPERTY(QString openvr READ openvr WRITE set_openvr NOTIFY openvrChanged)
 
 	Q_PROPERTY(bool hidForwarding READ hidForwarding WRITE set_hidForwarding NOTIFY hidForwardingChanged)
+	Q_PROPERTY(bool holdControllerPose READ holdControllerPose WRITE set_holdControllerPose NOTIFY holdControllerPoseChanged)
 	Q_PROPERTY(bool debugGui READ debugGui WRITE set_debugGui NOTIFY debugGuiChanged)
 	Q_PROPERTY(bool steamVrLh READ steamVrLh WRITE set_steamVrLh NOTIFY steamVrLhChanged)
 	Q_PROPERTY(bool lhMaxExtrapolationEnabled READ lhMaxExtrapolationEnabled NOTIFY lhMaxExtrapolationEnabledChanged)
@@ -92,6 +93,7 @@ public:
 	SETTER_GETTER_NOTIFY(bool, tenbit)
 	SETTER_GETTER_NOTIFY(QString, application)
 	SETTER_GETTER_NOTIFY(bool, hidForwarding)
+	SETTER_GETTER_NOTIFY(bool, holdControllerPose)
 	SETTER_GETTER_NOTIFY(bool, debugGui)
 	SETTER_GETTER_NOTIFY(bool, steamVrLh)
 	SETTER_GETTER_NOTIFY(bool, lhMaxExtrapolationEnabled)

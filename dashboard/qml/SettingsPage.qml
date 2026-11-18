@@ -117,6 +117,15 @@ Kirigami.ScrollablePage {
                     toolTipText: i18n("Replicate mouse, keyboard and gamepad connected to the headset as virtual devices on PC.\nReplicated devices will appear as if they were plugged to the PC, some keys may be reserved by the headset OS and not be available. Gamepad is also available without virtual devices for applications that access it through OpenXR.")
                 }
             }
+            RowLayout {
+                Controls.CheckBox {
+                    id: hold_controller_pose
+                    text: i18n("Keep controller pose when tracking is lost")
+                }
+                Kirigami.ContextualHelpButton {
+                    toolTipText: i18n("When a controller goes idle, falls asleep, or briefly loses tracking, keep its last pose so the hand does not snap to a default pose.\nHand tracking still takes over when the headset switches to it.")
+                }
+            }
             Controls.CheckBox {
                 id: debug_gui
                 text: i18n("Enable debug window")
@@ -341,6 +350,7 @@ Kirigami.ScrollablePage {
         }
         Settings.lhStickDeadzone = lh_stick_deadzone.value;
         Settings.hidForwarding = hid_forwarding.checked;
+        Settings.holdControllerPose = hold_controller_pose.checked;
 
         DashboardSettings.auto_connect_usb = auto_connect_usb.checked;
     }
@@ -353,6 +363,7 @@ Kirigami.ScrollablePage {
         lh_max_extrapolation.value = Settings.lhMaxExtrapolation;
         lh_stick_deadzone.value = Settings.lhStickDeadzone;
         hid_forwarding.checked = Settings.hidForwarding;
+        hold_controller_pose.checked = Settings.holdControllerPose;
 
         auto_connect_usb.checked = DashboardSettings.auto_connect_usb;
 

@@ -102,6 +102,24 @@ An application to start when connection with the headset is established, can be 
 ```
 Launch No Man's Sky in VR mode on Steam when connection with headset is established.
 
+## `hold-controller-pose`
+Default value: `false`
+
+When a controller that was tracked loses tracking, goes idle, falls asleep, or briefly disconnects, keep reporting its last valid poses (grip, aim, and the other controller spaces such as palm). Each held pose stays valid and tracked, with zero velocity, and the hand keeps its interaction profile and role. Fresh tracked poses resume normally. A bogus pose reported as the controller wakes (for example a single sample at the origin, or a pose that jumps around for a few samples) is ignored until tracking is stable again.
+
+Hand tracking is left alone: if the headset switches a hand to the hand-interaction profile, that profile is used as usual. With the option unset or `false`, behaviour is unchanged.
+
+The headset client does not need a matching change; the server applies this to the poses and interaction profiles the client already sends.
+
+### Example
+```json
+{
+	"hold-controller-pose": true
+}
+```
+
+Restart the server after changing the file. The dashboard has the same toggle under advanced settings.
+
 ## `tcp-only`
 Default value: `false`
 
