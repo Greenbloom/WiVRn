@@ -200,6 +200,9 @@ configuration::configuration()
 		if (auto it = json.find("use-steamvr-lh"); it != json.end())
 			use_steamvr_lh = *it;
 
+		if (auto it = json.find("hold-controller-pose"); it != json.end())
+			hold_controller_pose = *it;
+
 		if (auto it = json.find("lh-max-extrapolation"); it != json.end())
 			lh_max_extrapolation = *it;
 

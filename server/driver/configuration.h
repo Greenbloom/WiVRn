@@ -57,6 +57,9 @@ struct configuration
 	std::vector<std::string> application;
 	bool debug_gui = false;
 	bool use_steamvr_lh = false;
+	// Keep the last valid controller pose when tracking is lost, instead of
+	// reporting the controller as invalid. Off by default.
+	bool hold_controller_pose = false;
 	std::optional<int64_t> lh_max_extrapolation;
 	std::optional<float> lh_stick_deadzone;
 	bool hid_forwarding = false;

@@ -40,6 +40,7 @@
 #include "wivrn_uinput.h"
 #include "xrt/xrt_results.h"
 #include "xrt/xrt_system.h"
+#include <array>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -105,6 +106,14 @@ class wivrn_session : public xrt_system_devices
 	beman::inplace_vector::inplace_vector<wivrn_generic_tracker, from_headset::htc_body::max_tracked_poses> generic_trackers;
 	std::optional<wivrn_uinput> uinput_handler;
 	bool gamepad_connected = false; // network thread only
+
+	// Opt-in. When a hand's interaction profile drops to none, keep the last
+	// physical controller profile so the role stays valid. Hand tracking still
+	// replaces it. Network thread only.
+	bool hold_controller_pose = false;
+	std::array<interaction_profile, 2> latched_controller_profile{};
+	std::array<bool, 2> controller_profile_latched{};
+	std::array<bool, 2> controller_profile_held{};
 
 	clock_offset_estimator offset_est;
 	std::atomic<XrDuration> tracking_latency; // production to reception time

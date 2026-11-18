@@ -69,12 +69,33 @@ public:
 	void update_tracking(const wivrn::from_headset::tracking &, const clock_offset & offset);
 	void set_derived(pose_list * source, xrt_pose offset, bool force = false);
 
+	// When set, a tracked pose that later goes untracked or invalid is reported
+	// as the last valid pose (valid, tracked, zero velocity) until fresh
+	// tracking resumes. Default off, so pose history is unchanged.
+	void set_hold_when_untracked(bool enabled);
+
 	std::tuple<XrTime, xrt_space_relation, device_id> get_pose_at(XrTime at_timestamp_ns);
 
 	void reset();
 	std::pair<XrTime, xrt_space_relation> get_at(XrTime at_timestamp_ns);
 
 private:
+	struct held_pose
+	{
+		bool have = false;
+		bool holding = false;
+		XrTime timestamp = 0;
+		xrt_pose pose{};
+		int stable = 0;
+		XrTime candidate_since = 0;
+		xrt_pose candidate{};
+	};
+
+	bool hold_when_untracked = false;
+	held_pose held;
+
 	void add_sample(XrTime production_timestamp, XrTime timestamp, const from_headset::tracking::pose & pose, const clock_offset & offset);
+	// mutex must be held. Returns false when the sample must not enter history.
+	bool accept_tracked_sample(const from_headset::tracking::pose & pose, XrTime timestamp, bool & reset_history);
 };
 } // namespace wivrn
